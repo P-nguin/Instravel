@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Scout IG Exporter",
+  "version": "1.0",
+  "description": "Export Instagram Saved Reels to Scout.",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "host_permissions": [
+    "https://www.instagram.com/*",
+    "http://localhost:3000/*"
+  ]
+}
