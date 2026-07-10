@@ -4,9 +4,9 @@ services:
     environment:
       POSTGRES_DB: instravel
       POSTGRES_USER: instravel
-      POSTGRES_PASSWORD: instravel
+      POSTGRES_PASSWORD: scout123
     ports:
-      - "5432:5432"
+      - "5435:5432"
     volumes:
       - instravel-postgres:/var/lib/postgresql/data
 

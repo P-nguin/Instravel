@@ -1,78 +1,41 @@
-import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
 import { db } from "@/lib/prisma";
-import { optionalString, readRequestBody } from "@/lib/request";
-
-type InspirationItemPayload = {
-  tripId?: unknown;
-  sourceType?: unknown;
-  sourcePlatform?: unknown;
-  sourceUrl?: unknown;
-  title?: unknown;
-  description?: unknown;
-  userNote?: unknown;
-  rawMetadata?: unknown;
-};
-
-function isJsonObject(value: unknown): value is Prisma.InputJsonObject {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
+import { getCurrentUser } from "@/lib/auth";
 
 export async function POST(request: Request) {
   try {
-    const payload = await readRequestBody<InspirationItemPayload>(request);
-    const tripId = optionalString(payload.tripId);
-    const sourceType = optionalString(payload.sourceType);
-
-    if (!tripId || !sourceType) {
-      return NextResponse.json(
-        { error: "tripId and sourceType are required." },
-        { status: 400 }
-      );
-    }
+    const body = await request.json();
+    const {
+      tripId,
+      sourceType,
+      sourcePlatform,
+      sourceUrl,
+      description,
+      rawMetadata,
+    } = body;
 
     const user = await getCurrentUser();
-    const membership = await db.tripMember.findUnique({
-      where: {
-        tripId_userId: {
-          tripId,
-          userId: user.id
-        }
-      }
-    });
 
-    if (!membership) {
-      return NextResponse.json(
-        { error: "Current user is not a member of this trip." },
-        { status: 403 }
-      );
-    }
-
+    // Save the incoming reel to the database
     const item = await db.inspirationItem.create({
       data: {
         tripId,
         submittedById: user.id,
         sourceType,
-        sourcePlatform: optionalString(payload.sourcePlatform),
-        sourceUrl: optionalString(payload.sourceUrl),
-        title: optionalString(payload.title),
-        description: optionalString(payload.description),
-        userNote: optionalString(payload.userNote),
-        ...(isJsonObject(payload.rawMetadata)
-          ? { rawMetadata: payload.rawMetadata }
-          : {})
-      }
+        sourcePlatform,
+        sourceUrl,
+        description,
+        rawMetadata,
+        status: "pending",
+      },
     });
 
-    return NextResponse.json({ item }, { status: 201 });
-  } catch {
+    return NextResponse.json({ item }, { status: 200 });
+  } catch (error) {
+    console.error("Failed to save item:", error);
     return NextResponse.json(
-      {
-        error:
-          "Unable to create inspiration item. Check the database connection."
-      },
-      { status: 503 }
+      { error: "Internal Server Error" },
+      { status: 500 },
     );
   }
 }
