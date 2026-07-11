@@ -1,21 +1,31 @@
+import { db } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 import Link from "next/link";
 
-const placeholderTrips = [
-  {
-    id: "sample-japan-2026",
-    name: "Japan 2026",
-    destination: "Tokyo, Kyoto",
-    status: "Planning"
-  },
-  {
-    id: "sample-portugal-summer",
-    name: "Portugal summer",
-    destination: "Lisbon, Porto",
-    status: "Draft"
-  }
-];
+export default async function TripsPage() {
+  // 1. Get the current user
+  const user = await getCurrentUser();
 
-export default function TripsPage() {
+  // 2. Fetch the real trips from the database
+  const trips = await db.trip.findMany({
+    where: {
+      OR: [
+        { ownerId: user.id },
+        { members: { some: { userId: user.id } } }
+      ]
+    },
+    orderBy: { createdAt: "desc" },
+    include: {
+      // 3. Count the nested items so we can show real numbers on the cards!
+      _count: {
+        select: {
+          members: true,
+          inspiration: true
+        }
+      }
+    }
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -29,39 +39,49 @@ export default function TripsPage() {
       </div>
 
       <section className="grid gap-4 md:grid-cols-2">
-        {placeholderTrips.map((trip) => (
+        {trips.map((trip) => (
           <Link
-            className="surface block p-5 transition hover:border-stone-400"
+            className="surface block p-5 transition hover:border-stone-400 shadow-sm hover:shadow-md"
             href={`/trips/${trip.id}`}
             key={trip.id}
           >
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-ink">{trip.name}</h2>
-                <p className="mt-1 text-sm text-stone-600">
-                  {trip.destination}
+                <h2 className="text-lg font-bold text-ink">{trip.name}</h2>
+                <p className="mt-1 text-sm font-medium text-stone-600">
+                  {trip.destinationText || "No destination set"}
                 </p>
               </div>
-              <span className="rounded-md bg-sun/20 px-3 py-1 text-xs font-semibold text-stone-800">
-                {trip.status}
+              <span className="rounded-md bg-trail px-3 py-1 text-xs font-semibold text-white">
+                Planning
               </span>
             </div>
-            <div className="mt-5 grid grid-cols-3 gap-3 text-sm">
+            <div className="mt-6 grid grid-cols-3 gap-3 text-sm border-t border-stone-100 pt-4">
               <div>
-                <p className="font-semibold text-ink">0</p>
-                <p className="text-stone-500">Members</p>
+                <p className="font-bold text-ink">{trip._count.members}</p>
+                <p className="font-medium text-stone-500">Members</p>
               </div>
               <div>
-                <p className="font-semibold text-ink">0</p>
-                <p className="text-stone-500">Items</p>
+                <p className="font-bold text-ink">{trip._count.inspiration}</p>
+                <p className="font-medium text-stone-500">Items</p>
               </div>
               <div>
-                <p className="font-semibold text-ink">0</p>
-                <p className="text-stone-500">Stops</p>
+                <p className="font-bold text-ink">0</p>
+                <p className="font-medium text-stone-500">Stops</p>
               </div>
             </div>
           </Link>
         ))}
+
+        {/* Show a helpful message if they haven't created any trips yet */}
+        {trips.length === 0 && (
+          <div className="col-span-full py-12 text-center flex flex-col items-center justify-center surface border-dashed">
+            <p className="text-stone-500 font-medium">No trips created yet.</p>
+            <Link className="button-secondary mt-4" href="/trips/new">
+              Create your first trip
+            </Link>
+          </div>
+        )}
       </section>
     </div>
   );
