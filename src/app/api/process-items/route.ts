@@ -4,60 +4,94 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
 
+// The AI is now ONLY responsible for reading the text. No searching, no guessing addresses.
 const SYSTEM_PROMPT = `
-You are a batch data extraction assistant. 
+You are an expert Instagram caption data extractor.
 You will receive a JSON array of Instagram captions, each with a unique 'id'.
 
-For EACH item in the array:
-1. Identify the primary business name (restaurant, park, venue).
-2. Extract the exact street address, city, and price tier if they are mentioned. 
-3. If the address or city is missing from the text, use your internal knowledge of world geography and famous restaurants to confidently fill them in.
+For EACH item, extract ONLY the following:
+1. 'businessName': The core name of the restaurant, venue, or point of interest.
+2. 'city': The city it is located in (guess based on context if missing).
+3. 'priceTier': Guess the price tier based on caption clues ('$', '$$', '$$$', '$$$$'). Return null if unsure.
+4. 'vibeTags': 2-4 descriptive tags based on the text (e.g., ["cozy", "korean bbq"]).
 
-You MUST return a valid JSON array matching this exact structure:
+Return a valid JSON array matching this exact structure:
 [
   {
     "id": "the-item-id",
     "extractedData": {
-      "businessName": "Name (or null)",
-      "address": "Exact street address or neighborhood (or null)",
+      "businessName": "Official Name (or null)",
       "city": "City (or null)",
-      "priceTier": "One of: '$', '$$', '$$$', '$$$$' (or null)",
+      "priceTier": "Tier (or null)",
       "vibeTags": ["tag1", "tag2"]
     }
   }
 ]
 `;
 
-// Ticket 3: The Mapbox Geocoding Helper
-async function getCoordinates(address: string, city: string) {
-  if (!address && !city) return { lat: null, lng: null };
+// THE TRUE UPGRADE: Google Places API (New)
+async function fetchPlaceData(businessName: string, city: string) {
+  if (!businessName)
+    return { lat: null, lng: null, address: null, priceTier: null };
 
-  const query = encodeURIComponent(`${address || ""} ${city || ""}`.trim());
-  const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+  const query = `${businessName} ${city || ""}`.trim();
+  const key = process.env.GOOGLE_MAPS_API_KEY;
 
   try {
+    // The New API uses a POST request to places.googleapis.com
     const res = await fetch(
-      `https://api.mapbox.com/geocoding/v5/mapbox.places/${query}.json?access_token=${token}&limit=1`,
+      "https://places.googleapis.com/v1/places:searchText",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": key as string,
+          // FieldMask is mandatory in the New API to control your billing costs!
+          "X-Goog-FieldMask":
+            "places.formattedAddress,places.location,places.priceLevel",
+        },
+        body: JSON.stringify({
+          textQuery: query,
+          languageCode: "en",
+        }),
+      },
     );
+
     const data = await res.json();
 
-    if (data.features && data.features.length > 0) {
-      // Mapbox returns coordinates as an array: [longitude, latitude]
-      return {
-        lng: data.features[0].center[0],
-        lat: data.features[0].center[1],
+    // The New API returns an array called "places"
+    if (data.places && data.places.length > 0) {
+      const place = data.places[0];
+
+      // The New API returns price levels as specific enum strings
+      const priceMap: Record<string, string> = {
+        PRICE_LEVEL_FREE: "Free",
+        PRICE_LEVEL_INEXPENSIVE: "$",
+        PRICE_LEVEL_MODERATE: "$$",
+        PRICE_LEVEL_EXPENSIVE: "$$$",
+        PRICE_LEVEL_VERY_EXPENSIVE: "$$$$",
       };
+
+      const priceTier = place.priceLevel ? priceMap[place.priceLevel] : null;
+
+      return {
+        lat: place.location?.latitude || null,
+        lng: place.location?.longitude || null,
+        address: place.formattedAddress || null,
+        priceTier: priceTier || null,
+      };
+    } else {
+      console.warn(`Places API (New) found no results for: ${query}`);
     }
   } catch (error) {
-    console.error("Mapbox Geocoding failed:", error);
+    console.error("Google Places API (New) failed:", error);
   }
 
-  return { lat: null, lng: null };
+  return { lat: null, lng: null, address: null, priceTier: null };
 }
 
 export async function POST() {
   try {
-    // Grab up to 50 items at once for the bulk batch
     const pendingItems = await db.inspirationItem.findMany({
       where: { status: "pending" },
       take: 50,
@@ -85,7 +119,6 @@ export async function POST() {
     let failCount = 0;
 
     try {
-      // Send the single bulk request to Gemini
       const result = await model.generateContent(
         JSON.stringify(payloadToProcess),
       );
@@ -95,22 +128,58 @@ export async function POST() {
         .replace(/```json/g, "")
         .replace(/```/g, "")
         .trim();
-      const batchResults = JSON.parse(rawContent);
+        
+      // --- THE NEW SAFE PARSING BLOCK ---
+      let batchResults;
+      try {
+        batchResults = JSON.parse(rawContent);
+      } catch (parseError) {
+        console.error("FAILED TO PARSE AI JSON. The raw string was:");
+        console.error(rawContent);
+        
+        // Mark items as failed so they don't get stuck pending forever
+        for (const item of pendingItems) {
+          await db.inspirationItem.update({
+            where: { id: item.id },
+            data: { status: "failed_extraction" },
+          });
+          failCount++;
+        }
+        
+        return NextResponse.json(
+          { error: "AI returned malformed JSON data.", failCount },
+          { status: 500 }
+        );
+      }
+      // ----------------------------------
 
-      // Loop through Gemini's answers
       for (const resultItem of batchResults) {
-        const data = resultItem.extractedData;
+        const aiData = resultItem.extractedData;
 
-        // Ticket 3: Pass the AI's location data into the Mapbox geocoder
-        const coords = await getCoordinates(data.address, data.city);
+        // Pass ONLY the name and city to Google to do the heavy lifting
+        const googleData = await fetchPlaceData(
+          aiData.businessName,
+          aiData.city,
+        );
 
-        // Save BOTH the text data and the map coordinates to Prisma
+        // HYBRID FALLBACK: Use Google's price. If Google says null, use the AI's guess!
+        const finalPriceTier = googleData.priceTier || aiData.priceTier || null;
+
+        // Merge the AI's vibe tags with Google's factual data
+        const finalMetadata = {
+          businessName: aiData.businessName,
+          city: aiData.city,
+          vibeTags: aiData.vibeTags,
+          address: googleData.address,
+          priceTier: finalPriceTier,
+        };
+
         await db.inspirationItem.update({
           where: { id: resultItem.id },
           data: {
-            rawMetadata: data,
-            latitude: coords.lat,
-            longitude: coords.lng,
+            rawMetadata: finalMetadata,
+            latitude: googleData.lat,
+            longitude: googleData.lng,
             status: "processed",
           },
         });

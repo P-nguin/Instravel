@@ -4,67 +4,93 @@ import React, { useEffect, useRef } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 
-// Give Mapbox your public token from the .env file
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN as string;
 
-type MapProps = {
-  items: {
-    id: string;
-    latitude: number | null;
-    longitude: number | null;
-    rawMetadata: any;
-  }[];
-};
+interface MapProps {
+  items: any[];
+  routeGeometry?: any;
+}
 
-export default function Map({ items }: MapProps) {
+export default function Map({ items, routeGeometry }: MapProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
+  const markersRef = useRef<mapboxgl.Marker[]>([]);
 
   useEffect(() => {
-    // If the map is already loaded or the container isn't ready, do nothing
-    if (map.current || !mapContainer.current) return;
+    if (!mapContainer.current) return;
 
-    // Find the first item with valid coordinates to act as the center of the map
-    const validItem = items.find((i) => i.latitude && i.longitude);
-    const centerPoint = validItem
-      ? ([validItem.longitude, validItem.latitude] as [number, number]) // Mapbox requires [Lng, Lat]
-      : ([-73.985753, 40.749946] as [number, number]); // Default to NYC if no pins exist yet
+    if (!map.current) {
+      map.current = new mapboxgl.Map({
+        container: mapContainer.current,
+        style: "mapbox://styles/mapbox/light-v11",
+        center: [-73.985753, 40.749946],
+        zoom: 13,
+      });
 
-    // 1. Initialize the Map
-    map.current = new mapboxgl.Map({
-      container: mapContainer.current,
-      style: "mapbox://styles/mapbox/light-v11", // A clean, modern aesthetic
-      center: centerPoint,
-      zoom: 12,
-    });
+      map.current.on("load", () => {
+        if (!map.current) return;
+        map.current.addSource("optimized-route", {
+          type: "geojson",
+          data: {
+            type: "Feature",
+            properties: {},
+            geometry: { type: "LineString", coordinates: [] },
+          },
+        });
+        map.current.addLayer({
+          id: "route-layer",
+          type: "line",
+          source: "optimized-route",
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-color": "#3b82f6",
+            "line-width": 5,
+            "line-opacity": 0.8,
+          },
+        });
+      });
+    }
 
-    // 2. Loop through your AI-processed items and add markers
-    items.forEach((item) => {
-      if (item.latitude && item.longitude) {
-        // Build a little popup that shows the name and address when clicked
-        const popup = new mapboxgl.Popup({ offset: 25 }).setHTML(`
-          <div style="font-family: sans-serif; padding: 4px;">
-            <strong style="font-size: 14px;">${item.rawMetadata?.businessName || "Location"}</strong>
-            <p style="margin: 4px 0 0; font-size: 12px; color: #666;">
-              ${item.rawMetadata?.address || ""}
-            </p>
-          </div>
-        `);
+    const update = () => {
+      if (!map.current) return;
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current = [];
 
-        // Create the physical red pin and attach it to the map
-        new mapboxgl.Marker({ color: "#FF5A5F" }) // A nice travel-app coral red
-          .setLngLat([item.longitude, item.latitude])
-          .setPopup(popup)
-          .addTo(map.current!);
+      items.forEach((item, index) => {
+        if (item.latitude && item.longitude) {
+          const el = document.createElement("div");
+          el.style.cssText =
+            "background:#1c1917; color:white; width:28px; height:28px; border-radius:50%; display:flex; justify-content:center; align-items:center; font-weight:bold; font-size:12px;";
+
+          // FIX: Use orderIndex + 1 if available, otherwise fallback to array index + 1
+          const displayLabel =
+            item.orderIndex !== null && item.orderIndex !== undefined
+              ? item.orderIndex + 1
+              : index + 1;
+
+          el.innerText = displayLabel.toString();
+
+          const marker = new mapboxgl.Marker({ element: el })
+            .setLngLat([item.longitude, item.latitude])
+            .addTo(map.current!);
+          markersRef.current.push(marker);
+        }
+      });
+
+      if (routeGeometry && map.current.getSource("optimized-route")) {
+        (
+          map.current.getSource("optimized-route") as mapboxgl.GeoJSONSource
+        ).setData({
+          type: "Feature",
+          properties: {},
+          geometry: routeGeometry,
+        });
       }
-    });
-
-    // Cleanup function when the user navigates away from the page
-    return () => {
-      map.current?.remove();
-      map.current = null;
     };
-  }, [items]);
+
+    if (map.current.isStyleLoaded()) update();
+    else map.current.once("load", update);
+  }, [items, routeGeometry]);
 
   return (
     <div

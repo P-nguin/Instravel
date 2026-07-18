@@ -71,6 +71,8 @@ model InspirationItem {
   trip        Trip @relation(fields: [tripId], references: [id])
   submittedBy User @relation(fields: [submittedById], references: [id])
 
+  orderIndex  Int?
+
   @@index([tripId])
   @@index([submittedById])
 }
