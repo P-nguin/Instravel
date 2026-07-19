@@ -35,9 +35,13 @@ export default function TripClientView({ trip }: TripClientViewProps) {
 
       const data = await response.json();
 
-      if (data.routeGeometry) {
-        setRouteGeometry(data.routeGeometry); // Save the line for the Map
-        router.refresh(); // Tell Next.js to re-fetch Prisma to get the new orderIndex!
+      // FIX: Check for errors, not just routeGeometry.
+      // Set geometry (or null to clear old lines) and ALWAYS refresh the router!
+      if (!data.error) {
+        setRouteGeometry(data.routeGeometry || null);
+        router.refresh();
+      } else {
+        console.error("Optimization failed:", data.error);
       }
     } catch (error) {
       console.error("Failed to optimize route:", error);

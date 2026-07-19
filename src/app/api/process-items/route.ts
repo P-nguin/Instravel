@@ -12,6 +12,7 @@ You will receive a JSON array of Instagram captions, each with a unique 'id'.
 For EACH item, extract ONLY the following:
 1. 'businessName': The core name of the restaurant, venue, or point of interest.
 2. 'city': The city it is located in (guess based on context if missing).
+3. 'address': If a specific street address is written in the caption, extract it. Otherwise, return null.
 3. 'priceTier': Guess the price tier based on caption clues ('$', '$$', '$$$', '$$$$'). Return null if unsure.
 4. 'vibeTags': 2-4 descriptive tags based on the text (e.g., ["cozy", "korean bbq"]).
 
@@ -22,6 +23,7 @@ Return a valid JSON array matching this exact structure:
     "extractedData": {
       "businessName": "Official Name (or null)",
       "city": "City (or null)",
+      "address": "Street address if found (or null)",
       "priceTier": "Tier (or null)",
       "vibeTags": ["tag1", "tag2"]
     }
@@ -30,11 +32,17 @@ Return a valid JSON array matching this exact structure:
 `;
 
 // THE TRUE UPGRADE: Google Places API (New)
-async function fetchPlaceData(businessName: string, city: string) {
+async function fetchPlaceData(
+  businessName: string,
+  city: string,
+  aiAddress?: string,
+) {
   if (!businessName)
     return { lat: null, lng: null, address: null, priceTier: null };
 
-  const query = `${businessName} ${city || ""}`.trim();
+  const query = aiAddress
+    ? `${businessName} ${aiAddress}`.trim()
+    : `${businessName} ${city || ""}`.trim();
   const key = process.env.GOOGLE_MAPS_API_KEY;
 
   try {
@@ -46,9 +54,9 @@ async function fetchPlaceData(businessName: string, city: string) {
         headers: {
           "Content-Type": "application/json",
           "X-Goog-Api-Key": key as string,
-          // FieldMask is mandatory in the New API to control your billing costs!
+          // FIX: Append places.types to your FieldMask
           "X-Goog-FieldMask":
-            "places.formattedAddress,places.location,places.priceLevel",
+            "places.formattedAddress,places.location,places.priceLevel,places.types",
         },
         body: JSON.stringify({
           textQuery: query,
@@ -56,12 +64,39 @@ async function fetchPlaceData(businessName: string, city: string) {
         }),
       },
     );
-
     const data = await res.json();
 
     // The New API returns an array called "places"
     if (data.places && data.places.length > 0) {
       const place = data.places[0];
+
+      // FIX: Check if Google returned a broad area instead of a specific pin
+      const genericTypes = [
+        "locality",
+        "political",
+        "administrative_area_level_1",
+        "administrative_area_level_2",
+        "country",
+        "postal_code",
+      ];
+
+      // If the types array intersects with our generic list...
+      const isGeneric = place.types?.some((type: string) =>
+        genericTypes.includes(type),
+      );
+
+      if (isGeneric) {
+        console.warn(
+          `Places API found a generic area for: ${query}. Skipping coordinates.`,
+        );
+        // Keep the address for the UI, but return null coords so it is never mapped
+        return {
+          lat: null,
+          lng: null,
+          address: place.formattedAddress || null,
+          priceTier: null,
+        };
+      }
 
       // The New API returns price levels as specific enum strings
       const priceMap: Record<string, string> = {
@@ -128,7 +163,7 @@ export async function POST() {
         .replace(/```json/g, "")
         .replace(/```/g, "")
         .trim();
-        
+
       // --- THE NEW SAFE PARSING BLOCK ---
       let batchResults;
       try {
@@ -136,7 +171,7 @@ export async function POST() {
       } catch (parseError) {
         console.error("FAILED TO PARSE AI JSON. The raw string was:");
         console.error(rawContent);
-        
+
         // Mark items as failed so they don't get stuck pending forever
         for (const item of pendingItems) {
           await db.inspirationItem.update({
@@ -145,10 +180,10 @@ export async function POST() {
           });
           failCount++;
         }
-        
+
         return NextResponse.json(
           { error: "AI returned malformed JSON data.", failCount },
-          { status: 500 }
+          { status: 500 },
         );
       }
       // ----------------------------------
@@ -160,6 +195,7 @@ export async function POST() {
         const googleData = await fetchPlaceData(
           aiData.businessName,
           aiData.city,
+          aiData.address,
         );
 
         // HYBRID FALLBACK: Use Google's price. If Google says null, use the AI's guess!

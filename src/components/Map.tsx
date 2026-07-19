@@ -64,10 +64,7 @@ export default function Map({ items, routeGeometry }: MapProps) {
 
           // FIX: Use orderIndex + 1 if available, otherwise fallback to array index + 1
           const displayLabel =
-            item.orderIndex !== null && item.orderIndex !== undefined
-              ? item.orderIndex + 1
-              : index + 1;
-
+            item.orderIndex > 0 ? item.orderIndex : index + 1;
           el.innerText = displayLabel.toString();
 
           const marker = new mapboxgl.Marker({ element: el })
