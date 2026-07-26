@@ -1,12 +1,18 @@
+import { auth } from "@/auth";
 import { db } from "@/lib/prisma";
 
 export async function getCurrentUser() {
-  const email = process.env.CURRENT_USER_EMAIL ?? "demo@instravel.local";
-  const name = process.env.CURRENT_USER_NAME ?? "Demo Traveler";
+  const session = await auth();
 
-  return db.user.upsert({
-    where: { email },
-    update: { name },
-    create: { email, name }
+  if (!session?.user?.email) {
+    // Return null or handle unauthenticated users
+    return null;
+  }
+
+  // Retrieve or create the DB record for the authenticated user
+  const user = await db.user.findUnique({
+    where: { email: session.user.email },
   });
+
+  return user;
 }

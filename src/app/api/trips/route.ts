@@ -24,26 +24,29 @@ function parseDate(value: unknown) {
 export async function GET() {
   try {
     const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const trips = await db.trip.findMany({
       where: {
-        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }]
+        OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
       },
       orderBy: { createdAt: "desc" },
       include: {
         _count: {
           select: {
             members: true,
-            inspiration: true
-          }
-        }
-      }
+            inspiration: true,
+          },
+        },
+      },
     });
 
     return NextResponse.json({ trips });
   } catch {
     return NextResponse.json(
       { error: "Unable to list trips. Check the database connection." },
-      { status: 503 }
+      { status: 503 },
     );
   }
 }
@@ -56,11 +59,14 @@ export async function POST(request: Request) {
     if (!name) {
       return NextResponse.json(
         { error: "Trip name is required." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const trip = await db.trip.create({
       data: {
         name,
@@ -71,20 +77,20 @@ export async function POST(request: Request) {
         members: {
           create: {
             userId: user.id,
-            role: "owner"
-          }
-        }
+            role: "owner",
+          },
+        },
       },
       include: {
-        members: true
-      }
+        members: true,
+      },
     });
 
     return NextResponse.json({ trip }, { status: 201 });
   } catch {
     return NextResponse.json(
       { error: "Unable to create trip. Check the database connection." },
-      { status: 503 }
+      { status: 503 },
     );
   }
 }

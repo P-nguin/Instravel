@@ -15,6 +15,9 @@ export async function POST(request: Request) {
     } = body;
 
     const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
     // Save the incoming reel to the database
     const item = await db.inspirationItem.create({

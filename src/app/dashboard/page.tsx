@@ -1,9 +1,14 @@
 import Link from "next/link";
 import { db } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
+
+  if (!user) {
+    redirect("/login");
+  }
 
   // 1. Fetch real counts from the database for the current user
   const tripsCount = await db.trip.count({

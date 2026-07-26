@@ -1,18 +1,20 @@
 import { db } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 export default async function TripsPage() {
   // 1. Get the current user
   const user = await getCurrentUser();
 
+  if (!user) {
+    redirect("/login");
+  }
+
   // 2. Fetch the real trips from the database
   const trips = await db.trip.findMany({
     where: {
-      OR: [
-        { ownerId: user.id },
-        { members: { some: { userId: user.id } } }
-      ]
+      OR: [{ ownerId: user.id }, { members: { some: { userId: user.id } } }],
     },
     orderBy: { createdAt: "desc" },
     include: {
@@ -20,10 +22,10 @@ export default async function TripsPage() {
       _count: {
         select: {
           members: true,
-          inspiration: true
-        }
-      }
-    }
+          inspiration: true,
+        },
+      },
+    },
   });
 
   return (

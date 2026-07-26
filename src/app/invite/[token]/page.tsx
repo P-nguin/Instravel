@@ -10,6 +10,11 @@ export default async function InvitePage({
   const { token } = await params;
   const user = await getCurrentUser(); 
 
+  if (!user) {
+    // Send them to login, then bounce them right back to this exact invite link
+    redirect(`/login?callbackUrl=/invite/${token}`);
+  }
+
   // 1. Find the token
   const shareToken = await db.shareToken.findUnique({
     where: { token }
