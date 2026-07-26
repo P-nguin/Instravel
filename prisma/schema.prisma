@@ -33,6 +33,7 @@ model Trip {
   owner       User              @relation("TripOwner", fields: [ownerId], references: [id])
   members     TripMember[]
   inspiration InspirationItem[]
+  shareToken ShareToken?
 
   @@index([ownerId])
 }
@@ -75,4 +76,13 @@ model InspirationItem {
 
   @@index([tripId])
   @@index([submittedById])
+}
+
+model ShareToken {
+  id        String   @id @default(cuid())
+  token     String   @unique @default(uuid())
+  tripId    String   @unique
+  createdAt DateTime @default(now())
+
+  trip      Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
 }

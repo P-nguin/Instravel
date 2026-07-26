@@ -2,17 +2,30 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Map from "@/components/Map";
+import dynamic from "next/dynamic";
+
+// Dynamically import the Map so it doesn't block the page load!
+const Map = dynamic(() => import("@/components/Map"), {
+  ssr: false, // Mapbox requires the window object, so we disable Server-Side Rendering
+  loading: () => (
+    <div className="h-[600px] w-full rounded-2xl border border-stone-200 bg-stone-100 animate-pulse flex items-center justify-center">
+      <p className="text-stone-500 font-medium">Loading interactive map...</p>
+    </div>
+  ),
+});
 
 // Define the expected props based on what Prisma returns
 type TripClientViewProps = {
-  trip: any; // You can replace 'any' with your exact Prisma Trip payload type
+  trip: any;
 };
 
 export default function TripClientView({ trip }: TripClientViewProps) {
   const router = useRouter();
   const [routeGeometry, setRouteGeometry] = useState(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
+
+  const [isSharing, setIsSharing] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Separate processed items from the pending queue
   const mappedItems = trip.inspiration.filter(
@@ -47,6 +60,29 @@ export default function TripClientView({ trip }: TripClientViewProps) {
       console.error("Failed to optimize route:", error);
     } finally {
       setIsOptimizing(false);
+    }
+  };
+
+  const handleShare = async () => {
+    setIsSharing(true);
+    try {
+      const response = await fetch(`/api/trips/${trip.id}/share`, {
+        method: "POST",
+      });
+      const data = await response.json();
+
+      if (data.token) {
+        // Construct the full URL based on the current window location
+        const inviteUrl = `${window.location.origin}/invite/${data.token}`;
+        await navigator.clipboard.writeText(inviteUrl);
+
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2500); // Reset button text after 2.5s
+      }
+    } catch (error) {
+      console.error("Failed to generate invite link", error);
+    } finally {
+      setIsSharing(false);
     }
   };
 
@@ -106,6 +142,15 @@ export default function TripClientView({ trip }: TripClientViewProps) {
                 processing
               </div>
             )}
+
+            {/* SHARE BUTTON */}
+            <button
+              onClick={handleShare}
+              disabled={isSharing}
+              className="bg-white text-stone-900 border border-stone-300 px-4 py-2 rounded-lg text-sm font-medium hover:bg-stone-50 disabled:opacity-50 transition-colors w-32"
+            >
+              {copied ? "Copied!" : isSharing ? "Loading..." : "Copy Link"}
+            </button>
 
             {/* GOOGLE MAPS BUTTON */}
             <button
